@@ -1,0 +1,603 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER & AUTHENTICATION
+// ============================================
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  name          String?
+  avatar        String?
+  walletAddress String?    @unique
+  emailVerified DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  projects      Project[]
+  subscriptions Subscription[]
+  transactions  Transaction[]
+  votes         Vote[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+  @@index([walletAddress])
+}
+
+// ============================================
+// PROJECTS
+// ============================================
+
+model Project {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  status      String   @default("draft") // draft, active, archived
+  type        String   // token, eda, contract, blockchain, agent
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Relations
+  tokens       Token[]
+  edas         EDA[]
+  contracts    SmartContract[]
+  blockchains  Blockchain[]
+  agents       Agent[]
+  deployments  Deployment[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+// ============================================
+// TOKEN SYSTEM
+// ============================================
+
+model Token {
+  id              String   @id @default(cuid())
+  projectId       String
+  name            String
+  symbol          String   @unique
+  description     String?
+  totalSupply     BigInt   @default(50000000000) // 50 billion
+  decimals        Int      @default(18)
+  contractAddress String?  @unique
+  chainId         String?
+  standard        String   @default("Nova-20")
+  
+  // Features
+  mintable        Boolean  @default(true)
+  burnable        Boolean  @default(true)
+  pausable        Boolean  @default(true)
+  blacklistable   Boolean  @default(true)
+  antiWhale       Boolean  @default(false)
+  antiWhaleLimit  BigInt?
+  
+  // Treasury & Governance
+  treasuryEnabled Boolean  @default(true)
+  treasuryAddress String?
+  governanceEnabled Boolean @default(true)
+  
+  // Status
+  status          String   @default("draft") // draft, deployed, active, paused
+  deployedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Relations
+  holders     TokenHolder[]
+  transactions Transaction[]
+  auditLogs   AuditLog[]
+
+  @@index([projectId])
+  @@index([symbol])
+  @@index([status])
+}
+
+model TokenHolder {
+  id      String  @id @default(cuid())
+  tokenId String
+  address String
+  balance BigInt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenId, address])
+  @@index([tokenId])
+  @@index([address])
+}
+
+// ============================================
+// EXCLUSIVE DIGITAL ASSETS (EDA)
+// ============================================
+
+model EDA {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  assetType   String   // books, videos, music, software, agents, patents, trademarks, documents, certificates, intellectual_property
+  contentHash String?  @unique
+  fileUrl     String?
+  ipfsHash    String?  @unique
+  
+  // Ownership & Rights
+  creator     String
+  owner       String?
+  royaltyRate Float    @default(10) // 10% default
+  
+  // Status
+  status      String   @default("draft") // draft, published, archived
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Relations
+  licenses    EdaLicense[]
+  auditLogs   AuditLog[]
+
+  @@index([projectId])
+  @@index([assetType])
+  @@index([status])
+  @@index([creator])
+}
+
+model EdaLicense {
+  id        String   @id @default(cuid())
+  edaId     String
+  licensee  String
+  licenseType String // personal, commercial, enterprise
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  eda EDA @relation(fields: [edaId], references: [id], onDelete: Cascade)
+
+  @@index([edaId])
+  @@index([licensee])
+}
+
+// ============================================
+// SMART CONTRACTS
+// ============================================
+
+model SmartContract {
+  id              String   @id @default(cuid())
+  projectId       String
+  name            String
+  description     String?
+  contractType    String   // token, vault, staking, governance, bridge, dex, nft
+  sourceCode      String?
+  compiledCode    String?
+  abi             Json?
+  
+  // Deployment
+  deployedAddress String?  @unique
+  chainId         String?
+  deploymentTx    String?
+  
+  // Verification
+  verified        Boolean  @default(false)
+  verifiedAt      DateTime?
+  auditReport     String?
+  
+  // Status
+  status          String   @default("draft") // draft, testing, auditing, deployed, active, paused
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Relations
+  auditLogs AuditLog[]
+
+  @@index([projectId])
+  @@index([contractType])
+  @@index([status])
+  @@index([deployedAddress])
+}
+
+// ============================================
+// BLOCKCHAINS
+// ============================================
+
+model Blockchain {
+  id              String   @id @default(cuid())
+  projectId       String
+  name            String
+  symbol          String   @unique
+  description     String?
+  
+  // Network Details
+  chainId         String   @unique
+  rpcUrl          String
+  explorerUrl     String?
+  
+  // Consensus & Validation
+  consensusType   String   // proof_of_stake, proof_of_work, delegated_proof_of_stake
+  validatorCount  Int      @default(0)
+  
+  // Network Stats
+  blockTime       Int      @default(12) // seconds
+  maxBlockSize    BigInt   @default(1000000) // bytes
+  gasLimit        BigInt?
+  
+  // Status
+  status          String   @default("development") // development, testnet, mainnet, archived
+  launchedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Relations
+  blocks          Block[]
+  validators      Validator[]
+  deployments     Deployment[]
+  governance      Governance[]
+  treasury        Treasury?
+  auditLogs       AuditLog[]
+
+  @@index([projectId])
+  @@index([status])
+  @@index([chainId])
+}
+
+model Block {
+  id            String   @id @default(cuid())
+  blockchainId  String
+  blockNumber   BigInt
+  blockHash     String   @unique
+  parentHash    String?
+  timestamp     DateTime
+  transactions  Int
+  gasUsed       BigInt?
+  gasLimit      BigInt?
+  miner         String?
+  createdAt     DateTime @default(now())
+
+  blockchain Blockchain @relation(fields: [blockchainId], references: [id], onDelete: Cascade)
+
+  @@unique([blockchainId, blockNumber])
+  @@index([blockchainId])
+  @@index([timestamp])
+}
+
+// ============================================
+// VALIDATORS & STAKING
+// ============================================
+
+model Validator {
+  id            String   @id @default(cuid())
+  blockchainId  String
+  address       String
+  moniker       String?
+  status        String   @default("active") // active, inactive, jailed, pending
+  stakedAmount  BigInt   @default(0)
+  commissionRate Float   @default(5) // 5%
+  uptime        Float    @default(100)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  blockchain Blockchain @relation(fields: [blockchainId], references: [id], onDelete: Cascade)
+
+  // Relations
+  stakes Stake[]
+
+  @@unique([blockchainId, address])
+  @@index([blockchainId])
+  @@index([status])
+}
+
+model Stake {
+  id          String   @id @default(cuid())
+  validatorId String
+  delegator   String
+  amount      BigInt
+  shares      BigInt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  validator Validator @relation(fields: [validatorId], references: [id], onDelete: Cascade)
+
+  @@unique([validatorId, delegator])
+  @@index([validatorId])
+}
+
+// ============================================
+// AI AGENTS
+// ============================================
+
+model Agent {
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  agentType   String   // orchestrator, code_builder, security, blockchain, eda, token, treasury, governance, deployment, audit
+  version     String   @default("1.0.0")
+  
+  // Configuration
+  config      Json?
+  capabilities String[]
+  
+  // Status
+  status      String   @default("draft") // draft, training, active, archived
+  deployedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Relations
+  tasks       AgentTask[]
+  auditLogs   AuditLog[]
+
+  @@index([projectId])
+  @@index([agentType])
+  @@index([status])
+}
+
+model AgentTask {
+  id        String   @id @default(cuid())
+  agentId   String
+  taskType  String   // plan, build, audit, test, deploy, monitor, repair, optimize
+  input     Json?
+  output    Json?
+  status    String   @default("pending") // pending, running, completed, failed
+  result    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([status])
+}
+
+// ============================================
+// DEPLOYMENTS
+// ============================================
+
+model Deployment {
+  id            String   @id @default(cuid())
+  projectId     String
+  blockchainId  String?
+  name          String
+  environment   String   // development, staging, production
+  deploymentUrl String?
+  deployTarget  String   // docker, railway, vercel, aws, azure, gcp
+  
+  // Deployment Details
+  commitHash    String?
+  buildId       String?
+  status        String   @default("pending") // pending, building, deploying, active, failed, rolled_back
+  logs          String?
+  
+  // Monitoring
+  uptime        Float    @default(100)
+  lastHealthCheck DateTime?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  blockchain Blockchain? @relation(fields: [blockchainId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([status])
+  @@index([environment])
+}
+
+// ============================================
+// SUBSCRIPTIONS & BILLING
+// ============================================
+
+model Subscription {
+  id            String   @id @default(cuid())
+  userId        String
+  plan          String   // free, starter, professional, enterprise
+  status        String   @default("active") // active, canceled, expired
+  currentPeriodStart DateTime
+  currentPeriodEnd DateTime
+  canceledAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Relations
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================
+// TRANSACTIONS & PAYMENTS
+// ============================================
+
+model Transaction {
+  id              String   @id @default(cuid())
+  userId          String
+  tokenId         String?
+  subscriptionId  String?
+  amount          BigInt
+  currency        String   @default("USD")
+  transactionType String   // payment, refund, token_creation, eda_creation, contract_deployment, blockchain_creation, trading, staking, governance
+  status          String   @default("pending") // pending, completed, failed, refunded
+  
+  // Payment Details
+  paymentMethod   String?  // credit_card, wallet, bank_transfer
+  stripeId        String?  @unique
+  txHash          String?  @unique // blockchain tx hash
+  
+  metadata        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token Token? @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([transactionType])
+}
+
+// ============================================
+// TREASURY
+// ============================================
+
+model Treasury {
+  id              String   @id @default(cuid())
+  blockchainId    String   @unique
+  treasuryAddress String
+  totalBalance    BigInt   @default(0)
+  
+  // Treasury Metrics
+  inflow          BigInt   @default(0)
+  outflow         BigInt   @default(0)
+  
+  // Status
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  blockchain Blockchain @relation(fields: [blockchainId], references: [id], onDelete: Cascade)
+
+  // Relations
+  proposals Proposal[]
+
+  @@index([blockchainId])
+}
+
+// ============================================
+// GOVERNANCE
+// ============================================
+
+model Governance {
+  id              String   @id @default(cuid())
+  blockchainId    String
+  governanceToken String
+  quorumPercentage Float   @default(50)
+  votingPeriod    Int      @default(604800) // 7 days in seconds
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  blockchain Blockchain @relation(fields: [blockchainId], references: [id], onDelete: Cascade)
+
+  // Relations
+  proposals Proposal[]
+
+  @@index([blockchainId])
+}
+
+model Proposal {
+  id            String   @id @default(cuid())
+  governanceId  String
+  treasuryId    String?
+  title         String
+  description   String
+  proposalType  String   // parameter_change, treasury_spend, upgrade, text
+  
+  // Voting
+  startBlock    BigInt
+  endBlock      BigInt
+  status        String   @default("voting") // voting, passed, failed, executed
+  yesVotes      BigInt   @default(0)
+  noVotes       BigInt   @default(0)
+  abstainVotes  BigInt   @default(0)
+  
+  // Execution
+  executedAt    DateTime?
+  executionHash String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  governance Governance @relation(fields: [governanceId], references: [id], onDelete: Cascade)
+  treasury Treasury? @relation(fields: [treasuryId], references: [id], onDelete: SetNull)
+
+  // Relations
+  votes Vote[]
+
+  @@index([governanceId])
+  @@index([status])
+}
+
+model Vote {
+  id          String   @id @default(cuid())
+  proposalId  String
+  userId      String
+  choice      String   // yes, no, abstain
+  votingPower BigInt
+  createdAt   DateTime @default(now())
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, userId])
+  @@index([proposalId])
+  @@index([userId])
+}
+
+// ============================================
+// AUDIT LOGS
+// ============================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  action      String   // create, update, delete, deploy, verify, reject
+  entityType  String   // token, eda, contract, blockchain, agent, deployment
+  entityId    String
+  changes     Json?    // before/after values
+  ipAddress   String?
+  userAgent   String?
+  status      String   @default("success") // success, failure
+  errorMessage String?
+  createdAt   DateTime @default(now())
+
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token       Token?     @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  eda         EDA?       @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  contract    SmartContract? @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  blockchain  Blockchain? @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  agent       Agent?     @relation(fields: [entityId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+}
